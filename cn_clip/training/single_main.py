@@ -1,4 +1,3 @@
-import sys
 from math import ceil
 import os
 import logging
@@ -10,7 +9,7 @@ import importlib.util
 
 import torch
 from torch import optim
-import torch.distributed as dist
+# import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.cuda.amp import GradScaler
 
@@ -22,7 +21,6 @@ from cn_clip.training.params import parse_args
 from cn_clip.training.logger import setup_primary_logging, setup_worker_logging
 from cn_clip.training.scheduler import cosine_lr
 
-os.environ["LOCAL_RANK"]='0'
 
 # Used by https://github.com/openai/CLIP/issues/83 but not below.
 # Keeping it incase needed.
@@ -33,8 +31,8 @@ def convert_models_to_fp32(model):
             p.grad.data = p.grad.data.float()
 
 
-def is_master(args):
-    return args.rank == 0
+# def is_master(args):
+#     return args.rank == 0
 
 
 # used to compare the pytorch version
@@ -48,45 +46,42 @@ def torch_version_str_compare_lessequal(version1, version2):
 
 def main():
     args = parse_args()
-    # Set distributed group
-    args.local_device_rank = int(os.environ["LOCAL_RANK"])
-    torch.cuda.set_device(args.local_device_rank)
-    args.device = torch.device("cuda", args.local_device_rank)
 
+    # Set distributed group
+    # args.local_device_rank = int(os.environ["LOCAL_RANK"])
+    # torch.cuda.set_device(args.local_device_rank)
+    # args.device = torch.device("cuda", args.local_device_rank)
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # dist.init_process_group(backend="nccl")
-    world_size = 1
-    rank = 0
-    dist.init_process_group(backend='nccl',
-                            init_method='tcp://127.0.0.1:12584',
-                            rank=rank,
-                            world_size=world_size)
-    args.rank = dist.get_rank()
-    args.world_size = dist.get_world_size()
+    # args.rank = dist.get_rank()
+    # args.world_size = dist.get_world_size()
 
     # Set output path
     time_suffix = strftime("%Y-%m-%d-%H-%M-%S", gmtime())
     args.log_path = os.path.join(args.logs, args.name, "out_{}.log".format(time_suffix))
 
     args.checkpoint_path = os.path.join(args.logs, args.name, "checkpoints")
-    if is_master(args):
-        for dirname in [args.checkpoint_path]:
-            if dirname:
-                os.makedirs(dirname, exist_ok=True)
+    # if is_master(args):
+    for dirname in [args.checkpoint_path]:
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
 
     assert args.precision in ['amp', 'fp16', 'fp32']
 
     # Set logger
-    args.log_level = logging.DEBUG if args.debug else logging.INFO
-    log_queue = setup_primary_logging(args.log_path, args.log_level, args.rank)
+    # args.log_level = logging.DEBUG if args.debug else logging.INFO
+    # log_queue = setup_primary_logging(args.log_path, args.log_level, args.rank)
 
-    setup_worker_logging(args.rank, log_queue, args.log_level)
+    # setup_worker_logging(args.rank, log_queue, args.log_level)
 
     # Build the CLIP model
-    vision_model_config_file = Path(__file__).parent.parent / f"clip/model_configs/{args.vision_model.replace('/', '-')}.json"
+    vision_model_config_file = Path(
+            __file__).parent.parent / f"clip/model_configs/{args.vision_model.replace('/', '-')}.json"
     print('Loading vision model config from', vision_model_config_file)
     assert os.path.exists(vision_model_config_file)
 
-    text_model_config_file = Path(__file__).parent.parent / f"clip/model_configs/{args.text_model.replace('/', '-')}.json"
+    text_model_config_file = Path(
+            __file__).parent.parent / f"clip/model_configs/{args.text_model.replace('/', '-')}.json"
     print('Loading text model config from', text_model_config_file)
     assert os.path.exists(text_model_config_file)
 
@@ -103,13 +98,15 @@ def main():
         assert os.path.exists(args.clip_weight_path), "Pretrained CLIP weight not exists!"
     if args.bert_weight_path is not None:
         assert os.path.exists(args.bert_weight_path), "Pretrained BERT weight not exists!"
-    load(model, clip_path=args.clip_weight_path, bert_path=args.bert_weight_path, use_flash_attention=args.use_flash_attention)
+    load(model, clip_path=args.clip_weight_path, bert_path=args.bert_weight_path,
+         use_flash_attention=args.use_flash_attention)
 
     # See https://discuss.pytorch.org/t/valueerror-attemting-to-unscale-fp16-gradients/81372
     if args.precision == "amp" or args.precision == "fp32":
         convert_models_to_fp32(model)
 
-    model.cuda(args.local_device_rank)
+    # model.cuda(args.local_device_rank)
+    model.cuda(args.device)
     if args.precision == "fp16":
         convert_weights(model)
 
@@ -138,8 +135,9 @@ def main():
 
     # To make compatible with torch version <= 1.8.0, set find_unused_parameters to True
     # In other cases, set find_unused_parameters to False
-    find_unused_parameters = torch_version_str_compare_lessequal(torch.__version__, "1.8.0")
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_device_rank], find_unused_parameters=find_unused_parameters)
+    # find_unused_parameters = torch_version_str_compare_lessequal(torch.__version__, "1.8.0")
+    # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_device_rank],
+    #                                                   find_unused_parameters=find_unused_parameters)
     # Have to set this when activating grad checkpointing in Pytorch >= 2.0.0
     if args.grad_checkpointing and not torch_version_str_compare_lessequal(torch.__version__, "1.14.0"):
         model._set_static_graph()
@@ -151,8 +149,8 @@ def main():
     data = get_data(args, epoch_id=0, max_txt_length=args.context_length)
 
     # Initialize optimizer and lr scheduler
-    exclude = lambda n : "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
-    include = lambda n : not exclude(n)
+    exclude = lambda n: "bn" in n or "ln" in n or "bias" in n or 'logit_scale' in n
+    include = lambda n: not exclude(n)
 
     named_parameters = list(model.named_parameters())
     gain_or_bias_params = [p for n, p in named_parameters if exclude(n) and p.requires_grad]
@@ -163,13 +161,13 @@ def main():
         scheduler = None
     else:
         optimizer = optim.AdamW(
-            [
-                {"params": gain_or_bias_params, "weight_decay": 0.},
-                {"params": rest_params, "weight_decay": args.wd},
-            ],
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            eps=args.eps,
+                [
+                    {"params": gain_or_bias_params, "weight_decay": 0.},
+                    {"params": rest_params, "weight_decay": args.wd},
+                ],
+                lr=args.lr,
+                betas=(args.beta1, args.beta2),
+                eps=args.eps,
         )
         num_batches = data["train"].dataloader.num_batches
         if args.max_steps is not None:
@@ -183,13 +181,13 @@ def main():
     scaler = GradScaler() if args.precision == "amp" else None
 
     # Log and save hyper-params.
-    if is_master(args): # 在log中写入当前训练参数
-        logging.info("Params:")
-        params_file = os.path.join(args.logs, args.name, "params_{}.txt".format(time_suffix))
-        with open(params_file, "w", encoding="utf-8") as f:
-            for name in sorted(vars(args)):
-                val = getattr(args, name)
-                f.write(f"{name}: {val}\n")
+    # if is_master(args):
+    logging.info("Params:")
+    params_file = os.path.join(args.logs, args.name, "params_{}.txt".format(time_suffix))
+    with open(params_file, "w", encoding="utf-8") as f:
+        for name in sorted(vars(args)):
+            val = getattr(args, name)
+            f.write(f"{name}: {val}\n")
 
     if args.local_device_rank == 0:
         for name in sorted(vars(args)):
@@ -198,9 +196,9 @@ def main():
     logging.info(f"Use GPU: {args.local_device_rank} for training")
 
     # Note for mask_ratio
-    if is_master(args) and args.mask_ratio > 0 and args.vision_model in ['RN50']:
-        logging.info("Note: mask_ratio > 0 (FLIP strategy) is currently only implemented for VisualTransformer. " + \
-            "It will not function for ResNet backbone.")
+    # if is_master(args) and args.mask_ratio > 0 and args.vision_model in ['RN50']:
+    logging.info("Note: mask_ratio > 0 (FLIP strategy) is currently only implemented for VisualTransformer. " + \
+                 "It will not function for ResNet backbone.")
 
     # Optionally resume from a checkpoint
     start_epoch = 0
@@ -213,7 +211,7 @@ def main():
     if args.resume is not None:
         if os.path.isfile(args.resume):
             logging.info(
-                f"=> begin to load checkpoint '{args.resume}'"
+                    f"=> begin to load checkpoint '{args.resume}'"
             )
             # Restore the model weight, map model to be loaded to specified single gpu.
             # loc = "cuda:{}".format(args.local_device_rank)
@@ -238,7 +236,7 @@ def main():
                 optimizer.load_state_dict(checkpoint["optimizer"])
                 logging.info("=> optimizer state is restored from the checkpoint")
             logging.info(
-                f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']} @ {steps} steps)"
+                    f"=> loaded checkpoint '{args.resume}' (epoch {checkpoint['epoch']} @ {steps} steps)"
             )
         else:
             logging.info("=> no checkpoint found at '{}'".format(args.resume))
@@ -248,64 +246,65 @@ def main():
 
     # determine if this worker should save logs and checkpoints.
     # only do so if it is the 0th worker.
-    args.should_save = (args.logs is not None and args.logs != '' and args.logs.lower() != 'none') and is_master(args)
+    # args.should_save = (args.logs is not None and args.logs != '' and args.logs.lower() != 'none') and is_master(args)
 
     # load teacher model to distllation
-    if args.distllation:
-        try:
-            from modelscope.models import Model
-        except:
-            raise ImportError("modelscope is not installed. Please install it by `pip install modelscope`.")
-
-        teacher_model_dict = {
-            "damo/multi-modal_team-vit-large-patch14_multi-modal-similarity" : {"model": "image_model"},
-            "damo/multi-modal_rleg-vit-large-patch14" : {"model": "encode_image"},
-            "damo/multi-modal_clip-vit-huge-patch14_zh" : {"clip_model": "encode_image"},
-            "damo/multi-modal_clip-vit-large-patch14_zh" : {"clip_model": "encode_image"},
-        }
-        assert args.teacher_model_name in teacher_model_dict, "Error: Valid teacher model name has not been built."
-
-        try:
-            teacher_model = Model.from_pretrained(args.teacher_model_name)
-        except Exception as e:
-            if "Unexpected key(s) in state_dict" in str(e):
-                error_message = (
-                    "An error occurred while loading the model: {}\n"
-                    "Maybe you should update modelscope. ".format(e)
-                )
-                raise RuntimeError(error_message)
-
-        for k, v in teacher_model.state_dict().items():
-            v.requires_grad = False
-
-        # mapping different extract_features function to same name
-        mapping = teacher_model_dict[args.teacher_model_name]
-        if "model" in mapping and hasattr(teacher_model, "model"):
-            model_instance = getattr(teacher_model, "model")
-            if hasattr(model_instance, mapping["model"]):
-                setattr(teacher_model, "get_feature", getattr(model_instance, mapping["model"]))
-        elif "clip_model" in mapping and hasattr(teacher_model, "clip_model"):
-            model_instance = getattr(teacher_model, "clip_model")
-            if hasattr(model_instance, mapping["clip_model"]):
-                setattr(teacher_model, "get_feature", getattr(model_instance, mapping["clip_model"]))
-
-        teacher_model.cuda(args.local_device_rank)
-        teacher_model = torch.nn.parallel.DistributedDataParallel(teacher_model, device_ids=[args.local_device_rank])
-        logging.info(f"Teacher model loaded from {args.teacher_model_name}")
-    else:
-        teacher_model = None
-
+    # if args.distllation:
+    #     try:
+    #         from modelscope.models import Model
+    #     except:
+    #         raise ImportError("modelscope is not installed. Please install it by `pip install modelscope`.")
+    #
+    #     teacher_model_dict = {
+    #         "damo/multi-modal_team-vit-large-patch14_multi-modal-similarity" : {"model": "image_model"},
+    #         "damo/multi-modal_rleg-vit-large-patch14" : {"model": "encode_image"},
+    #         "damo/multi-modal_clip-vit-huge-patch14_zh" : {"clip_model": "encode_image"},
+    #         "damo/multi-modal_clip-vit-large-patch14_zh" : {"clip_model": "encode_image"},
+    #     }
+    #     assert args.teacher_model_name in teacher_model_dict, "Error: Valid teacher model name has not been built."
+    #
+    #     try:
+    #         teacher_model = Model.from_pretrained(args.teacher_model_name)
+    #     except Exception as e:
+    #         if "Unexpected key(s) in state_dict" in str(e):
+    #             error_message = (
+    #                 "An error occurred while loading the model: {}\n"
+    #                 "Maybe you should update modelscope. ".format(e)
+    #             )
+    #             raise RuntimeError(error_message)
+    #
+    #     for k, v in teacher_model.state_dict().items():
+    #         v.requires_grad = False
+    #
+    #     # mapping different extract_features function to same name
+    #     mapping = teacher_model_dict[args.teacher_model_name]
+    #     if "model" in mapping and hasattr(teacher_model, "model"):
+    #         model_instance = getattr(teacher_model, "model")
+    #         if hasattr(model_instance, mapping["model"]):
+    #             setattr(teacher_model, "get_feature", getattr(model_instance, mapping["model"]))
+    #     elif "clip_model" in mapping and hasattr(teacher_model, "clip_model"):
+    #         model_instance = getattr(teacher_model, "clip_model")
+    #         if hasattr(model_instance, mapping["clip_model"]):
+    #             setattr(teacher_model, "get_feature", getattr(model_instance, mapping["clip_model"]))
+    #
+    #     teacher_model.cuda(args.local_device_rank)
+    #     teacher_model = torch.nn.parallel.DistributedDataParallel(teacher_model, device_ids=[args.local_device_rank])
+    #     logging.info(f"Teacher model loaded from {args.teacher_model_name}")
+    # else:
+    #     teacher_model = None
 
     for epoch in range(start_epoch, args.max_epochs):
-        if is_master(args) == 0:
-            logging.info(f'Start epoch {epoch + 1}')
-        if args.distllation:
-            num_steps_this_epoch = train(model, data, epoch, optimizer, scaler, scheduler, args, steps, teacher_model)
-        else:
-            num_steps_this_epoch = train(model, data, epoch, optimizer, scaler, scheduler, args, steps)
+        # if is_master(args) == 0:
+        logging.info(f'Start epoch {epoch + 1}')
+        # if args.distllation:
+        #     num_steps_this_epoch = train(model, data, epoch, optimizer, scaler, scheduler, args, steps, teacher_model)
+        # else:
+        #     num_steps_this_epoch = train(model, data, epoch, optimizer, scaler, scheduler, args, steps)
+        num_steps_this_epoch = train(model, data, epoch, optimizer, scaler, scheduler, args, steps)
         steps += num_steps_this_epoch
 
-        if args.val_data is not None and args.valid_epoch_interval is not None and ((epoch + 1) % args.valid_epoch_interval) == 0:
+        if args.val_data is not None and args.valid_epoch_interval is not None and (
+                (epoch + 1) % args.valid_epoch_interval) == 0:
             assert "val" in data, "Error: Valid dataset has not been built."
             if not args.use_flash_attention:
                 evaluate(model, data, epoch, args, steps)
@@ -321,37 +320,64 @@ def main():
         # Saving checkpoints.
         if args.should_save and num_steps_this_epoch > 0:
             if (epoch + 1) == args.max_epochs or (
-                args.save_epoch_frequency > 0 and ((epoch + 1) % args.save_epoch_frequency) == 0
+                    args.save_epoch_frequency > 0 and ((epoch + 1) % args.save_epoch_frequency) == 0
             ):
                 t1 = time.time()
                 save_path = os.path.join(args.checkpoint_path, f"epoch{epoch + 1}.pt")
                 torch.save(
-                    {
-                        "epoch": epoch + 1,
-                        "step": steps,
-                        "name": args.name,
-                        "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(model.state_dict()),
-                        "optimizer": optimizer.state_dict(),
-                    },
-                    save_path,
+                        {
+                            "epoch"     : epoch + 1,
+                            "step"      : steps,
+                            "name"      : args.name,
+                            "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(
+                                    model.state_dict()),
+                            "optimizer" : optimizer.state_dict(),
+                        },
+                        save_path,
                 )
-                logging.info("Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1, steps, time.time() - t1))
+                logging.info(
+                        "Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path,
+                                                                                                     epoch + 1,
+                                                                                                     steps,
+                                                                                                     time.time() - t1))
 
             # Save the latest params
             t1 = time.time()
             save_path = os.path.join(args.checkpoint_path, f"epoch_latest.pt")
             torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "step": steps,
-                    "name": args.name,
-                    "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(model.state_dict()),
-                    "optimizer": optimizer.state_dict(),
-                },
-                save_path,
+                    {
+                        "epoch"     : epoch + 1,
+                        "step"      : steps,
+                        "name"      : args.name,
+                        "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(
+                                model.state_dict()),
+                        "optimizer" : optimizer.state_dict(),
+                    },
+                    save_path,
             )
-            logging.info("Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1, steps, time.time() - t1))
+            logging.info(
+                    "Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1,
+                                                                                                 steps,
+                                                                                                 time.time() - t1))
 
+
+# --train-data '/mnt/e/GitHub/chinese_clip_data/datasets/MUGE/lmdb/train'
+# --val-data '/mnt/e/GitHub/chinese_clip_data/datasets/MUGE/lmdb/valid'
+# --num-workers 4 --valid-num-workers 1 --logs /mnt/e/GitHub/chinese_clip_data/experiments/
+# --name muge_finetune_vit-b-16_roberta-base_bs128_8gpu --log-interval 1
+# --report-training-batch-acc True --batch-size 64 --valid-batch-size 64
+# --max-steps 99999 --max-epochs 30 --valid-step-interval 150
+# --valid-epoch-interval 1 --context-length 52 --beta1 0.9
+# --beta2 0.98 --lr 5e-05 --eps 1e-06 --wd 0.001 --warmup 100
+# --use-bn-sync False --use-augment True --skip-scheduler False
+# --save-epoch-frequency 1 --save-step-frequency 999999
+# --resume /mnt/e/GitHub/chinese_clip_data/pretrained_weights/clip_cn_vit-b-16.pt
+# --reset-optimizer True --reset-data-offset True --precision amp
+# --vision-model ViT-B-16 --mask-ratio 0 --clip-weight-path None
+# --freeze-vision False --text-model RoBERTa-wwm-ext-base-chinese
+# --bert-weight-path None --grad-checkpointing False --use-flash-attention False
+# --accum-freq 1 --gather-with-grad False --skip-aggregate False
+# --debug False --seed 123 --distllation False --teacher-model-name None --kd-loss-weight 0.5
 
 if __name__ == "__main__":
     main()

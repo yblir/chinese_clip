@@ -18,13 +18,14 @@ def parse_args():
     parser.add_argument(
         "--train-data",
         type=str,
-        required=True,
+        # required=True,
+        default=r'/mnt/e/GitHub/chinese_clip_data/datasets/MUGE/lmdb/train',
         help="Path to the LMDB directory with training data split",
     )
     parser.add_argument(
         "--val-data",
         type=str,
-        default=None,
+        default='/mnt/e/GitHub/chinese_clip_data/datasets/MUGE/lmdb/valid',
         help="Path to the LMDB directory with validation data split, default to None which disables validation",
     )
     parser.add_argument(

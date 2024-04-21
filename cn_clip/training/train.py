@@ -18,7 +18,9 @@ from cn_clip.clip.model import convert_state_dict
 def is_master(args):
     return args.rank == 0
 
-def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_features=None, accum_text_features=None, accum_idx=-1, teacher_model=None, teacher_accum_image_features=None):
+
+def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_features=None, accum_text_features=None,
+             accum_idx=-1, teacher_model=None, teacher_accum_image_features=None):
     if args.accum_freq == 1:
         image_features, text_features, logit_scale = model(images, texts, args.mask_ratio)
 
@@ -26,7 +28,7 @@ def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_feature
             with torch.no_grad():
                 # different teacher model has different output
                 output = teacher_model.module.get_feature(images)
-                if(isinstance(output, tuple)):
+                if (isinstance(output, tuple)):
                     teacher_image_features = output[0]
                 else:
                     teacher_image_features = output
@@ -38,17 +40,18 @@ def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_feature
             with torch.no_grad():
                 # different teacher model has different output
                 output = teacher_model.module.get_feature(images)
-                if(isinstance(output, tuple)):
+                if (isinstance(output, tuple)):
                     teacher_chunk_image_features = output[0]
                 else:
                     teacher_chunk_image_features = output
             teacher_image_features = torch.cat(
-            teacher_accum_image_features[:accum_idx] + [teacher_chunk_image_features] + teacher_accum_image_features[accum_idx + 1:])
-        
+                    teacher_accum_image_features[:accum_idx] + [
+                        teacher_chunk_image_features] + teacher_accum_image_features[accum_idx + 1:])
+
         image_features = torch.cat(
-            accum_image_features[:accum_idx] + [chunk_image_features] + accum_image_features[accum_idx + 1:])
+                accum_image_features[:accum_idx] + [chunk_image_features] + accum_image_features[accum_idx + 1:])
         text_features = torch.cat(
-            accum_text_features[:accum_idx] + [chunk_text_features] + accum_text_features[accum_idx + 1:])
+                accum_text_features[:accum_idx] + [chunk_text_features] + accum_text_features[accum_idx + 1:])
     logit_scale = logit_scale.mean()
     if args.aggregate:
         world_size = dist.get_world_size()
@@ -68,19 +71,19 @@ def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_feature
             gathered_text_features = [
                 torch.zeros_like(text_features) for _ in range(world_size)
             ]
-            
+
             dist.all_gather(gathered_image_features, image_features)
             dist.all_gather(gathered_text_features, text_features)
 
             all_image_features = torch.cat(
-                [image_features]
-                + gathered_image_features[:rank]
-                + gathered_image_features[rank + 1 :]
+                    [image_features]
+                    + gathered_image_features[:rank]
+                    + gathered_image_features[rank + 1:]
             )
             all_text_features = torch.cat(
-                [text_features]
-                + gathered_text_features[:rank]
-                + gathered_text_features[rank + 1 :]
+                    [text_features]
+                    + gathered_text_features[:rank]
+                    + gathered_text_features[rank + 1:]
             )
 
         # this is needed to send gradients back everywhere.
@@ -93,9 +96,9 @@ def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_feature
             ]
             dist.all_gather(gathered_teacher_image_features, teacher_image_features)
             all_teacher_image_features = torch.cat(
-                [teacher_image_features]
-                + gathered_teacher_image_features[:rank]
-                + gathered_teacher_image_features[rank + 1 :]
+                    [teacher_image_features]
+                    + gathered_teacher_image_features[:rank]
+                    + gathered_teacher_image_features[rank + 1:]
             )
             kd_loss = cosineSimilarityLoss(all_teacher_image_features, all_image_features)
 
@@ -110,9 +113,9 @@ def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_feature
     ground_truth = ground_truth.cuda(args.local_device_rank, non_blocking=True)
 
     total_loss = (
-        loss_img(logits_per_image, ground_truth)
-        + loss_txt(logits_per_text, ground_truth)
-    ) / 2
+                         loss_img(logits_per_image, ground_truth)
+                         + loss_txt(logits_per_text, ground_truth)
+                 ) / 2
 
     acc = None
     if args.report_training_batch_acc:
@@ -125,13 +128,16 @@ def get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_feature
 
     return total_loss, acc
 
+
 def freeze_vision_bn(args, model):
     # freeze bn running mean and variance
     if 'RN' in args.vision_model:
-        RN_visual_modules = model.module.visual.modules() if isinstance(model, nn.parallel.DistributedDataParallel) else model.visual.modules()
+        RN_visual_modules = model.module.visual.modules() if isinstance(model,
+                                                                        nn.parallel.DistributedDataParallel) else model.visual.modules()
         for m in RN_visual_modules:
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
+
 
 def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained_steps, teacher_model=None):
     # os.environ["WDS_EPOCH"] = str(epoch)
@@ -140,7 +146,7 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
     if args.freeze_vision:
         freeze_vision_bn(args, model)
 
-    dataloader, sampler = data['train'].dataloader,  data['train'].sampler
+    dataloader, sampler = data['train'].dataloader, data['train'].sampler
 
     loss_img = nn.CrossEntropyLoss()
     loss_txt = nn.CrossEntropyLoss()
@@ -168,7 +174,8 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
         step = num_steps_per_epoch * epoch + i_accum
         # reach the args.max_steps, exit training:
         if step >= args.max_steps:
-            logging.info("Stopping training due to step {} has reached max_steps {}".format(step, args.max_steps // args.accum_freq))
+            logging.info("Stopping training due to step {} has reached max_steps {}".format(step,
+                                                                                            args.max_steps // args.accum_freq))
             return epoch_trained_steps
         scheduler(step)
 
@@ -189,7 +196,8 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
             if args.precision == "amp":
                 with autocast():
                     if args.distllation:
-                        total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args, teacher_model=teacher_model)
+                        total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args,
+                                                   teacher_model=teacher_model)
                     else:
                         total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args)
                     scaler.scale(total_loss).backward()
@@ -198,7 +206,8 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
 
             else:
                 if args.distllation:
-                    total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args, teacher_model=teacher_model)
+                    total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args,
+                                               teacher_model=teacher_model)
                 else:
                     total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args)
                 total_loss.backward()
@@ -210,7 +219,7 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
                     chunk_image_features, chunk_text_features, _ = model(images, texts)
                 if args.distllation:
                     output = teacher_model.module.get_feature(images)
-                    if(len(output) == 2):
+                    if (len(output) == 2):
                         teacher_chunk_image_features = output[0]
                     else:
                         teacher_chunk_image_features = output
@@ -238,9 +247,11 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
                     # `total_loss` and `acc` are coarsely sampled, taking only the last result in the loop.
                     # Although each result should be the same in theory, it will be slightly different in practice
                     if args.distllation:
-                        total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_features, accum_text_features, j, teacher_model, teacher_accum_image_features)
+                        total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_features,
+                                                   accum_text_features, j, teacher_model, teacher_accum_image_features)
                     else:
-                        total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_features, accum_text_features, j)
+                        total_loss, acc = get_loss(model, images, texts, loss_img, loss_txt, args, accum_image_features,
+                                                   accum_text_features, j)
                 if args.precision == "amp":
                     scaler.scale(total_loss).backward()
                 else:
@@ -273,19 +284,20 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
             percent_complete = 100.0 * (i_accum + 1) / num_steps_per_epoch
 
             logging.info(
-                f"Global Steps: {step + 1}/{args.max_steps} | " +
-                f"Train Epoch: {epoch + 1} [{num_samples}/{samples_per_epoch} ({percent_complete:.0f}%)] | " +
-                f"Loss: {total_loss.item():.6f} | " +
-                (f"Image2Text Acc: {acc['i2t'].item() * 100:.2f} | " if args.report_training_batch_acc else "") +
-                (f"Text2Image Acc: {acc['t2i'].item() * 100:.2f} | " if args.report_training_batch_acc else "") +
-                f"Data Time: {data_time:.3f}s | " +
-                f"Batch Time: {batch_time:.3f}s | " +
-                f"LR: {optimizer.param_groups[0]['lr']:5f} | " +
-                f"logit_scale: {m.logit_scale.data:.3f} | " +
-                f"Global Batch Size: {batch_size * args.world_size}"
+                    f"Global Steps: {step + 1}/{args.max_steps} | " +
+                    f"Train Epoch: {epoch + 1} [{num_samples}/{samples_per_epoch} ({percent_complete:.0f}%)] | " +
+                    f"Loss: {total_loss.item():.6f} | " +
+                    (f"Image2Text Acc: {acc['i2t'].item() * 100:.2f} | " if args.report_training_batch_acc else "") +
+                    (f"Text2Image Acc: {acc['t2i'].item() * 100:.2f} | " if args.report_training_batch_acc else "") +
+                    f"Data Time: {data_time:.3f}s | " +
+                    f"Batch Time: {batch_time:.3f}s | " +
+                    f"LR: {optimizer.param_groups[0]['lr']:5f} | " +
+                    f"logit_scale: {m.logit_scale.data:.3f} | " +
+                    f"Global Batch Size: {batch_size * args.world_size}"
             )
 
-        if args.val_data is not None and args.valid_step_interval is not None and ((step + 1) % args.valid_step_interval) == 0:
+        if args.val_data is not None and args.valid_step_interval is not None and (
+                (step + 1) % args.valid_step_interval) == 0:
             assert "val" in data, "Error: Valid dataset has not been built."
             if not args.use_flash_attention:
                 evaluate(model, data, epoch, args, step + 1)
@@ -302,37 +314,44 @@ def train(model, data, epoch, optimizer, scaler, scheduler, args, global_trained
             save_path = os.path.join(args.checkpoint_path, f"epoch_{epoch + 1}_{step + 1}.pt")
             t1 = time.time()
             torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "step": step + 1,
-                    "name": args.name,
-                    "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(model.state_dict()),
-                    "optimizer": optimizer.state_dict(),
-                },
-                save_path,
+                    {
+                        "epoch"     : epoch + 1,
+                        "step"      : step + 1,
+                        "name"      : args.name,
+                        "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(
+                            model.state_dict()),
+                        "optimizer" : optimizer.state_dict(),
+                    },
+                    save_path,
             )
-            logging.info("Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1, step + 1, time.time() - t1))
+            logging.info(
+                "Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1,
+                                                                                             step + 1,
+                                                                                             time.time() - t1))
 
             # Save the latest params
             t1 = time.time()
             save_path = os.path.join(args.checkpoint_path, f"epoch_latest.pt")
             torch.save(
-                {
-                    "epoch": epoch + 1,
-                    "step": step + 1,
-                    "name": args.name,
-                    "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(model.state_dict()),
-                    "optimizer": optimizer.state_dict(),
-                },
-                save_path,
+                    {
+                        "epoch"     : epoch + 1,
+                        "step"      : step + 1,
+                        "name"      : args.name,
+                        "state_dict": model.state_dict() if not args.use_flash_attention else convert_state_dict(
+                            model.state_dict()),
+                        "optimizer" : optimizer.state_dict(),
+                    },
+                    save_path,
             )
-            logging.info("Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1, step + 1, time.time() - t1))
-        
+            logging.info(
+                "Saved checkpoint {} (epoch {} @ {} steps) (writing took {} seconds)".format(save_path, epoch + 1,
+                                                                                             step + 1,
+                                                                                             time.time() - t1))
+
     return epoch_trained_steps
 
 
 def evaluate(model, data, epoch, args, steps):
-
     logging.info("Begin to eval on validation set (epoch {} @ {} steps)...".format(epoch + 1, steps))
 
     model.eval()
@@ -370,9 +389,9 @@ def evaluate(model, data, epoch, args, steps):
             ground_truth = torch.arange(len(images)).long()
             ground_truth = ground_truth.cuda(args.local_device_rank, non_blocking=True)
             total_loss = (
-                loss_img(logits_per_image, ground_truth)
-                + loss_txt(logits_per_text, ground_truth)
-            ) / 2
+                                 loss_img(logits_per_image, ground_truth)
+                                 + loss_txt(logits_per_text, ground_truth)
+                         ) / 2
 
             batch_size = len(images)
             cumulative_loss += total_loss * batch_size
@@ -392,27 +411,27 @@ def evaluate(model, data, epoch, args, steps):
         i2t_acc = cumulative_i2t_acc / num_elements
         t2i_acc = cumulative_t2i_acc / num_elements
 
-        assert num_elements.item() == dataloader.num_samples # sanity check
+        assert num_elements.item() == dataloader.num_samples  # sanity check
 
         logging.info(
-            f"Validation Result (epoch {epoch + 1} @ {steps} steps) | "
-            f"Valid Loss: {loss.item():.6f} | "
-            f"Image2Text Acc: {i2t_acc.item() * 100:.2f} | " 
-            f"Text2Image Acc: {t2i_acc.item() * 100:.2f} | " 
-            f"logit_scale: {model.module.logit_scale.data:.3f} | "
-            f"Valid Batch Size: {batch_size}"
+                f"Validation Result (epoch {epoch + 1} @ {steps} steps) | "
+                f"Valid Loss: {loss.item():.6f} | "
+                f"Image2Text Acc: {i2t_acc.item() * 100:.2f} | "
+                f"Text2Image Acc: {t2i_acc.item() * 100:.2f} | "
+                f"logit_scale: {model.module.logit_scale.data:.3f} | "
+                f"Valid Batch Size: {batch_size}"
         )
+
 
 def cosineSimilarityLoss(feature1, feature2):
     scale_factor_h = feature1.shape[0] / feature2.size(0)
     scale_factor_w = feature1.shape[1] / feature2.size(1)
 
     feature2_interpolated = F.interpolate(feature2.unsqueeze(0).unsqueeze(0),
-                            size=(feature1.shape[0], feature1.shape[1]),
-                            mode='bilinear',
-                            align_corners=False)
+                                          size=(feature1.shape[0], feature1.shape[1]),
+                                          mode='bilinear',
+                                          align_corners=False)
     feature2_interpolated = feature2_interpolated.squeeze(0).squeeze(0)
-    
 
     cosine_sim = F.cosine_similarity(feature1, feature2_interpolated, dim=1)
     similarity_loss = 1 - cosine_sim.mean()

@@ -85,8 +85,7 @@ def packing_small_onnx_files(onnx_path):
 
 
 '''
-python cn_clip/deploy/pytorch_to_onnx.py --model-arch ViT-B-16 --pytorch-ckpt-path 
-E:\GitHub\chinese_clip_data\weights\clip_cn_vit-b-16.pt --save-onnx-path E:\GitHub\chinese_clip_data\weights\\vit-b-16 --convert-text --convert-vision
+python cn_clip/deploy/pytorch_to_onnx.py --model-arch ViT-B-16 --pytorch-ckpt-path E:\GitHub\chinese_clip_data\weights\clip_cn_vit-b-16.pt --save-onnx-path E:\GitHub\chinese_clip_data\weights\\vit-b-16 --convert-text --convert-vision
 '''
 if __name__ == '__main__':
     args = parse_args()
